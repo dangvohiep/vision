@@ -1,3 +1,5 @@
+import typing
+
 import torch
 from torch import nn
 import torch.utils.data
@@ -119,7 +121,26 @@ def train(
     optimizer: torch.optim.Optimizer,
     batch_size: int,
     n_epochs: int,
-):
+    checkpoint_output: typing.Optional[str] = None,
+) -> nn.Module:
+    """
+
+    Parameters:
+        - model (nn.Module): The neural network model to train.
+        - dataset (torch.utils.data.Dataset): The dataset to train the model on.
+        - optimizer (torch.optim.Optimizer): The optimizer to use for training.
+        - batch_size (int): The size of each batch.
+        - n_epochs (int): The number of epochs to train the model for.
+        - checkpoint_output (Optional[str]): The directory path to save model checkpoints after each epoch. 
+          If None, checkpoints are not saved.
+
+    Returns:
+        (nn.Module) The trained model.
+
+    This function directly modifies the model passed to it by updating its weights based on the
+    computed gradients during the training process. It also optionally saves the model's state
+    at the end of each epoch if a checkpoint output directory is provided.
+    """
 
     train_dataloader = torch.utils.data.DataLoader(
         dataset=dataset,
@@ -170,8 +191,15 @@ def train(
                 f'bbox MAE: {bbox_mae:.2e}, '
                 f'loss: {avg_loss:.2e}'
             )
+        
+        # Save checkpoint
+        if checkpoint_output:
+            torch.save(model, f'{checkpoint_output}/epoch{epoch + 1}')
+
+        # Reset metric records for next epoch
         metrics.reset()
         print('='*20)
+    
     return model
 
 

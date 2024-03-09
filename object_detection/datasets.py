@@ -81,108 +81,108 @@ class BananasDataset(torch.utils.data.Dataset):
         return len(self.features)
 
 
-
 class NuImagesDataset(torch.utils.data.Dataset):
 
     """
-    A PyTorch Dataset class for loading and using the nuImages dataset.
-    """
+    A PyTorch Dataset class for the nuImages dataset that loads images and annotations on-the-fly.
+    
+    This class is designed to handle large datasets by loading images and their corresponding
+    annotations lazily, i.e., as they are needed for training, instead of loading the entire
+    dataset into RAM at once. This approach significantly reduces memory consumption and is
+    especially useful when working with large datasets.
+    
+    Attributes:
+        - nuim (NuImages): The nuImages dataset object initialized with provided parameters
+        - n_categories (int): number of categories
+        - n_annotations (int): The maximum number of annotations per image. Defaults to 10
+        - category_mapper (dict): A mapping from category tokens to numeric labels
+        - sample_data (list): A list of metadata for keyframe sample images in the dataset.
+        - dataroot (str): The root directory where the nuImages data is located
+        - version (Literal): The version of the nuImages dataset to use. Can be "v1.0-train", "v1.0-val",
+          "v1.0-test", or "v1.0-mini".
+        - device (torch.device): The device on which tensors are loaded
 
+    """
     def __init__(
         self, 
-        n_annotations: int = 10,
-        lazy: bool = True,
-        dataroot: str = f'{os.environ["PYTHONPATH"]}/data/nuimages',
-        version: typing.Literal["v1.0-train", "v1.0-val", "v1.0-test", "v1.0-mini"] = "v1.0-mini",
-        device: torch.device = torch.device('cpu'),
+        n_annotations: int = 10, 
+        dataroot: str = f'{os.environ["PYTHONPATH"]}/data/nuimages', 
+        version: typing.Literal["v1.0-train", "v1.0-val", "v1.0-test", "v1.0-mini"] = "v1.0-mini", 
+        device: torch.device = torch.device('cpu')
     ):
         
         """
-        Attributes:
-        - nuim (NuImages): The nuImages dataset object.
-        - n_categories (int): number of categories
-
         Parameters:
         - n_annotations (int): The maximum number of annotations per image. Defaults to 10.
-        - lazy (bool): If True, images are loaded lazily. Defaults to True.
         - dataroot (str): The root directory where the nuImages data is located.
-        - version (Literal): The version of the nuImages dataset to use. Can be "v1.0-train", "v1.0-val", "v1.0-test", or "v1.0-mini".
+        - version (Literal): The version of the nuImages dataset to use. Can be "v1.0-train", "v1.0-val",
+          "v1.0-test", or "v1.0-mini".
         - device (torch.device): The device on which tensors are loaded. Defaults to CPU.
+
         """
+        self.n_annotations = n_annotations
+        self.device = device
+        self.version = version
+        self.dataroot = dataroot
         
         # Initialize the nuImages dataset with the given parameters
-        self.nuim = NuImages(dataroot=dataroot, version=version, verbose=True, lazy=lazy)
+        self.nuim = NuImages(dataroot=dataroot, version=version, verbose=True, lazy=True)
         
         # Map categories to numeric labels
-        category_mapper = {category['token']: float(i) for i, category in enumerate(self.nuim.category)}
+        self.category_mapper = {category['token']: float(i) for i, category in enumerate(self.nuim.category)}
 
-        # Prepare containers for annotations and image tensors.
-        image_annotations = defaultdict(list)
-        image_tensors = dict()
-
-        for sample_image in self.nuim.sample_data:
-            
-            # Only extract keyframes (those have annotations)
-            if not sample_image['is_key_frame']:
-                continue
-
-            image_token = sample_image['token']
-            filename = sample_image['filename']
-            
-            # Get image tensor
-            image_tensors[filename] = torchvision.io.read_image(
-                os.path.join(dataroot, filename)
-            ).to(dtype=torch.float, device=device)
-
-            # Get annotations
-            count = 0
-            for annotation in self.nuim.object_ann:
-                if annotation['sample_data_token'] == image_token:
-                    count += 1
-                    if count <= n_annotations:
-                        # Get relavtive bboxes
-                        width = sample_image['width']
-                        height = sample_image['height']
-                        bbox_absolute = annotation['bbox']
-                        bbox_relavtive = [
-                            bbox_absolute[0] / width,
-                            bbox_absolute[1] / height,
-                            bbox_absolute[2] / width,
-                            bbox_absolute[3] / height,
-                        ]
-                        # Get numeric categories
-                        category_token = annotation['category_token']
-                        category_number = category_mapper[category_token]
-                        image_annotations[filename].append([category_number] + bbox_relavtive)
-
-            # Pad annotations if there are less than `n_annotations`.
-            if count < n_annotations:
-                n_pad = n_annotations - count
-                image_annotations[filename].extend([[-1.] + [0.] * 4] * n_pad)
-
-        # Convert annotations to tensors.
-        image_annotations = {
-            filename: torch.tensor(bboxes, dtype=torch.float, device=device) 
-            for filename, bboxes in image_annotations.items()
-        }
-
-        # Prepare the dataset records as a list of (image_tensor, annotations) tuples.
-        self.__records = [
-            (image_tensors[filename], image_annotations[filename])
-            for filename in image_tensors.keys()
-        ]
-        self.n_categories = len(category_mapper.keys())
-
+        # Get number of categories
+        self.n_categories = len(self.category_mapper)
+        
+        # Store only the metadata required to load images and annotations on-the-fly
+        self.sample_data = [sample for sample in self.nuim.sample_data if sample['is_key_frame']]
 
     def __getitem__(self, idx: int):
-        return self.__records[idx]
+        sample_image: dict = self.sample_data[idx]
+        image_token: str = sample_image['token']
+        filename: str = sample_image['filename']
+        
+        # Load image
+        image_path = os.path.join(self.dataroot, filename)
+        image_tensor = torchvision.io.read_image(path=image_path).to(dtype=torch.float, device=self.device)
+        
+        # Load annotations
+        annotations = []
+        count = 0
+        for annotation in self.nuim.object_ann:
+            if annotation['sample_data_token'] == image_token:
+                count += 1
+                if count <= self.n_annotations:
+                    # Get relavtive bboxes
+                    bbox_absolute = annotation['bbox']
+                    bbox_relative = [
+                        bbox_absolute[0] / sample_image['width'],
+                        bbox_absolute[1] / sample_image['height'],
+                        bbox_absolute[2] / sample_image['width'],
+                        bbox_absolute[3] / sample_image['height'],
+                    ]
+                    # Get numeric categories
+                    category_token = annotation['category_token']
+                    category_number = self.category_mapper[category_token]
+                    # Append the annotation list
+                    annotations.append([category_number] + bbox_relative)
+        
+        # Pad annotations if needed
+        if count < self.n_annotations:
+            n_pad = self.n_annotations - count
+            annotations.extend([[-1.] + [0.] * 4] * n_pad)
+        
+        annotations_tensor = torch.tensor(annotations, dtype=torch.float, device=self.device)
+        
+        return image_tensor, annotations_tensor
 
     def __len__(self):
-        return len(self.__records)
+        return len(self.sample_data)
+
 
 
 if __name__ == '__main__':
 
-    self = NuImagesDataset()
+    self = NuImagesDataset(n_annotations=10, version='v1.0-train')
 
 
