@@ -129,6 +129,7 @@ class NuImagesDataset(torch.utils.data.Dataset):
         self.nuim = NuImages(dataroot=dataroot, version=version, verbose=True, lazy=True)
         
         # Map categories to numeric labels
+        # TODO: need a mapper for showing label directly from float
         self.category_mapper = {category['token']: float(i) for i, category in enumerate(self.nuim.category)}
 
         # Get number of categories

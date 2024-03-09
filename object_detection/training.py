@@ -194,7 +194,7 @@ def train(
         
         # Save checkpoint
         if checkpoint_output:
-            torch.save(model, f'{checkpoint_output}/epoch{epoch + 1}')
+            torch.save(model, f'{checkpoint_output}/epoch{epoch + 1}.pt')
 
         # Reset metric records for next epoch
         metrics.reset()

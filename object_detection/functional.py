@@ -208,7 +208,7 @@ def assign_bbox_to_anchor(
     - Tensor: A tensor of shape (M,) where each element is the index of the ground-truth bounding box assigned
       to the corresponding anchor. If an anchor is not assigned to any ground-truth box, its value is -1.
     """
-    num_gt_boxes = gt_bboxes.shape[0]   # N
+    n_gt_boxes = gt_bboxes.shape[0]     # N
     n_anchors = anchors.shape[0]        # M
 
     # Compute the IoU between all pairs of anchors and ground-truth boxes
@@ -228,11 +228,11 @@ def assign_bbox_to_anchor(
 
     # Step 2: Ensure that each ground-truth box is assigned to at least one anchor
     # (the one with the highest IoU, regardless of iou_threshold)
-    for _ in range(num_gt_boxes):
+    for _ in range(n_gt_boxes):
         # Find the anchor/ground-truth pair with the highest IoU
         max_idx = torch.argmax(jaccard)     # it flattens `jaccard` before find the index -> shape = ()
-        bbox_idx = (max_idx % num_gt_boxes).long()      # column index
-        anchor_idx = (max_idx // num_gt_boxes).long()   # row index
+        bbox_idx = (max_idx % n_gt_boxes).long()      # column index
+        anchor_idx = (max_idx // n_gt_boxes).long()   # row index
         anchors_bbox_map[anchor_idx] = bbox_idx     # map each anchor_i with one bbox_j
         # Prevent further assignment to the chosen ground-truth box and anchor
         jaccard[:, bbox_idx] = -1
@@ -274,16 +274,21 @@ def compute_groundtruth(anchors: torch.Tensor, labels: torch.Tensor) -> typing.T
 
     batch_offsets, batch_masks, batch_class_labels = [], [], []
 
-    for i in range(batch_size):
-        image_labels = labels[i, :, :]      # shape = (G, 5)
-        image_anchors = anchors[i, :, :]    # shape = (M, 4)
+    for n in range(batch_size):
+        image_labels = labels[n, :, :]      # shape = (G, 5)
+        image_anchors = anchors[n, :, :]    # shape = (M, 4)
         # Assign each anchor box to a ground-truth bounding box
         anchors_bbox_map = assign_bbox_to_anchor(
             gt_bboxes=image_labels[:, 1:],  # shape = (G, 4)
             anchors=image_anchors,          # shape = (M, 4)
         )                                   # shape = (M,)
         # Create a mask to identify anchors that are assigned bounding box coordinates
-        bbox_mask = (anchors_bbox_map >= 0).float().unsqueeze(-1).repeat(1, 4)  # shape = (M, 4)
+        bbox_mask = (anchors_bbox_map >= 0).float()         # shape = (M,)
+        # filter padding bounding boxes (set bbox_mask to 0 for padding bboxes)
+        padding_indexes = (image_labels[:, 0] < 0).nonzero(as_tuple=True)[0]
+        padding_mask = torch.isin(anchors_bbox_map, padding_indexes)
+        bbox_mask[padding_mask] = 0
+        bbox_mask = bbox_mask.unsqueeze(-1).repeat(1, 4)    # shape = (M, 4)
         # Initialize tensors for class labels and assigned bounding box coordinates
         class_labels = torch.zeros(n_anchors, dtype=torch.long, device=anchors.device)             # shape = (M,)
         assigned_bboxes = torch.zeros((n_anchors, 4), dtype=labels.dtype, device=labels.device)    # shape = (M, 4)
