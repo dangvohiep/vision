@@ -5,8 +5,8 @@ from torch import nn
 import torch.utils.data
 import torch.nn.functional as F
 
-from utils import Accumulator
-import object_detection
+from utils import Accumulator, EarlyStopping
+from object_detection import compute_groundtruth, filter_predictions
 
 
 def loss_function(
@@ -117,25 +117,32 @@ def bbox_eval(bbox_predictions: torch.Tensor, bbox_labels: torch.Tensor, bbox_ma
 
 def train(
     model: nn.Module,
-    dataset: torch.utils.data.Dataset,
+    train_dataset: torch.utils.data.Dataset,
+    val_dataset: torch.utils.data.Dataset,
     optimizer: torch.optim.Optimizer,
-    batch_size: int,
+    train_batch_size: int,
+    val_batch_size: int,
     n_epochs: int,
+    patience: int,
+    tolerance: float,
     checkpoint_output: typing.Optional[str] = None,
 ) -> nn.Module:
     """
-
     Parameters:
-        - model (nn.Module): The neural network model to train.
-        - dataset (torch.utils.data.Dataset): The dataset to train the model on.
-        - optimizer (torch.optim.Optimizer): The optimizer to use for training.
-        - batch_size (int): The size of each batch.
-        - n_epochs (int): The number of epochs to train the model for.
-        - checkpoint_output (Optional[str]): The directory path to save model checkpoints after each epoch. 
-          If None, checkpoints are not saved.
+    - model (nn.Module): The neural network model to train.
+    - train_dataset (torch.utils.data.Dataset): The dataset to train the model on.
+    - val_dataset (torch.utils.data.Dataset): The dataset to evaluate the model on.
+    - optimizer (torch.optim.Optimizer): The optimizer to use for training.
+    - train_batch_size (int): The size of each training batch.
+    - val_batch_size (int): The size of each evaluation batch.
+    - n_epochs (int): The number of epochs to train the model for.
+    - patience (int): Number of epochs with no improvement after which training will be stopped.
+    - tolerance (float): The minimum change in eval_loss. Defaults to 0
+    - checkpoint_output (Optional[str]): The directory path to save model checkpoints after each epoch. 
+      If None, checkpoints are not saved.
 
     Returns:
-        (nn.Module) The trained model.
+    - (nn.Module) The trained model.
 
     This function directly modifies the model passed to it by updating its weights based on the
     computed gradients during the training process. It also optionally saves the model's state
@@ -143,11 +150,12 @@ def train(
     """
 
     train_dataloader = torch.utils.data.DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
+        dataset=train_dataset,
+        batch_size=train_batch_size,
         shuffle=True,
     )
-    metrics = Accumulator()
+    train_metrics = Accumulator()
+    early_stopping = EarlyStopping(patience, tolerance)
 
     # loop through each epoch
     for epoch in range(n_epochs):
@@ -158,7 +166,7 @@ def train(
             # Generate multiscale anchor boxes and predict their classes and offsets
             anchors, pred_classes, pred_offsets = model(batch_images)
             # Label the classes and offsets of these anchor boxes
-            gt_offsets, gt_bbox_masks, gt_classes = object_detection.compute_groundtruth(
+            gt_offsets, gt_bbox_masks, gt_classes = compute_groundtruth(
                 anchors=anchors,
                 labels=gt_labels,
             )
@@ -172,24 +180,24 @@ def train(
             ).mean()
             loss.backward()
             optimizer.step()
-
+            
             # Accumulate the metrics
-            metrics.add(
+            train_metrics.add(
                 correct_predictions=classification_eval(class_predictions=pred_classes, class_labels=gt_classes),
                 n_predictions=gt_classes.numel(),
                 bbox_mae=bbox_eval(bbox_predictions=pred_offsets, bbox_labels=gt_offsets, bbox_masks=gt_bbox_masks),
                 n_mae=gt_offsets.numel(),
                 loss=loss,
             )
-            classification_error = 1 - metrics['correct_predictions'] / metrics['n_predictions']
-            bbox_mae = metrics['bbox_mae'] / metrics['n_mae']
-            avg_loss = metrics['loss'] / (batch + 1)
+            train_classification_error = 1 - train_metrics['correct_predictions'] / train_metrics['n_predictions']
+            train_bbox_mae = train_metrics['bbox_mae'] / train_metrics['n_mae']
+            train_loss = train_metrics['loss'] / (batch + 1)
             print(
                 f'Epoch {epoch + 1}/{n_epochs} || '
-                f'Batch {batch + 1}/{len(dataset) // batch_size + 1}: '
-                f'classification error: {classification_error:.2e}, '
-                f'bbox MAE: {bbox_mae:.2e}, '
-                f'loss: {avg_loss:.2e}'
+                f'Batch {batch + 1}/{len(train_dataset) // train_batch_size + 1} || '
+                f'train_classification_error: {train_classification_error:.2e}, '
+                f'train_bbox_mae: {train_bbox_mae:.2e}, '
+                f'train_loss: {train_loss:.2e}'
             )
         
         # Save checkpoint
@@ -197,10 +205,79 @@ def train(
             torch.save(model, f'{checkpoint_output}/epoch{epoch + 1}.pt')
 
         # Reset metric records for next epoch
-        metrics.reset()
+        train_metrics.reset()
+
+        val_classification_error, val_bbox_mae, val_loss = evaluate(model=model, dataset=val_dataset, batch_size=val_batch_size)
+        print(
+            f'Epoch {epoch + 1}/{n_epochs} || '
+            f'val_classification_error: {val_classification_error:.2e}, '
+            f'val_bbox_mae: {val_bbox_mae:.2e}, '
+            f'val_loss: {val_loss:.2e}'
+        )
         print('='*20)
+
+        early_stopping(val_loss)
+        if early_stopping:
+            print('Early Stopped')
+            break
     
     return model
+
+
+def evaluate(
+    model: nn.Module, 
+    dataset: torch.utils.data.Dataset,
+    batch_size: int,
+) -> typing.Tuple[float, float, float]:
+    """
+    Evaluate an object detection model on a given dataset.
+
+    Parameters:
+    - model (nn.Module): The object detection model to be evaluated.
+    - dataset (torch.utils.data.Dataset): The dataset on which the model is evaluated.
+    - batch_size (int): size of each evaluation batch.
+
+    Returns:
+    - Tuple[float, float, torch.Tensor]: Returns a tuple containing the classification error,
+      the mean absolute error (MAE) for bounding box predictions, and the mean loss across all samples.
+    """
+
+    dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
+    metrics = Accumulator()
+
+    # Loop through each batch
+    for batch, (batch_images, gt_labels) in enumerate(dataloader):    # (N, 3, 256, 256), (N, 1, 5)
+        # Predict the anchor locations, class probabilities, and bounding box offsets from the model.
+        anchors, pred_classes, pred_offsets = model(batch_images)
+        # Compute the ground truth offsets, masks for bounding boxes, and class labels for evaluation.
+        gt_offsets, gt_bbox_masks, gt_classes = compute_groundtruth(
+            anchors=anchors,
+            labels=gt_labels,
+        )
+        # Calculate the loss using predictions and ground truth values.
+        loss = loss_function(
+            class_predictions=pred_classes,
+            class_labels=gt_classes,
+            bbox_predictions=pred_offsets,
+            bbox_labels=gt_offsets,
+            bbox_masks=gt_bbox_masks,
+        ).mean().item()  # Mean loss over the evaluation dataset.
+        
+        # Accumulate the metrics
+        metrics.add(
+            correct_predictions=classification_eval(class_predictions=pred_classes, class_labels=gt_classes),
+            n_predictions=gt_classes.numel(),
+            bbox_mae=bbox_eval(bbox_predictions=pred_offsets, bbox_labels=gt_offsets, bbox_masks=gt_bbox_masks),
+            n_mae=gt_offsets.numel(),
+            loss=loss,
+        )
+    
+    # Compute the aggregate metrics
+    classification_error = 1 - metrics['correct_predictions'] / metrics['n_predictions']
+    bbox_mae = metrics['bbox_mae'] / metrics['n_mae']
+    loss = metrics['loss'] / (batch + 1)
+        
+    return classification_error, bbox_mae, loss
 
 
 def predict(model: nn.Module, X: torch.Tensor) -> torch.Tensor:
@@ -229,9 +306,5 @@ def predict(model: nn.Module, X: torch.Tensor) -> torch.Tensor:
     anchors, pred_classes, pred_offsets = model(X)
     pred_probs = F.softmax(pred_classes, dim=2)
 
-    return object_detection.filter_predictions(
-        cls_probs=pred_probs,
-        pred_offsets=pred_offsets,
-        anchors=anchors,
-    )
+    return filter_predictions(cls_probs=pred_probs, pred_offsets=pred_offsets, anchors=anchors)
 

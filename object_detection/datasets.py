@@ -95,7 +95,8 @@ class NuImagesDataset(torch.utils.data.Dataset):
         - nuim (NuImages): The nuImages dataset object initialized with provided parameters
         - n_categories (int): number of categories
         - n_annotations (int): The maximum number of annotations per image. Defaults to 10
-        - category_mapper (dict): A mapping from category tokens to numeric labels
+        - category_token_numeric_mapper (dict): A mapping from category tokens to numeric labels
+        - category_numeric_name_mapper (dict): A mapping from numeric labels to category name
         - sample_data (list): A list of metadata for keyframe sample images in the dataset.
         - dataroot (str): The root directory where the nuImages data is located
         - version (Literal): The version of the nuImages dataset to use. Can be "v1.0-train", "v1.0-val",
@@ -129,11 +130,12 @@ class NuImagesDataset(torch.utils.data.Dataset):
         self.nuim = NuImages(dataroot=dataroot, version=version, verbose=True, lazy=True)
         
         # Map categories to numeric labels
-        # TODO: need a mapper for showing label directly from float
-        self.category_mapper = {category['token']: float(i) for i, category in enumerate(self.nuim.category)}
+        self.category_token_numeric_mapper = {category['token']: float(i) for i, category in enumerate(self.nuim.category)}
+        # Map numeric labels to category names
+        self.category_numeric_name_mapper = {float(i): category['name'] for i, category in enumerate(self.nuim.category)}
 
         # Get number of categories
-        self.n_categories = len(self.category_mapper)
+        self.n_categories = len(self.category_token_numeric_mapper)
         
         # Store only the metadata required to load images and annotations on-the-fly
         self.sample_data = [sample for sample in self.nuim.sample_data if sample['is_key_frame']]
@@ -164,7 +166,7 @@ class NuImagesDataset(torch.utils.data.Dataset):
                     ]
                     # Get numeric categories
                     category_token = annotation['category_token']
-                    category_number = self.category_mapper[category_token]
+                    category_number = self.category_token_numeric_mapper[category_token]
                     # Append the annotation list
                     annotations.append([category_number] + bbox_relative)
         
