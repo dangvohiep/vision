@@ -72,30 +72,30 @@ net = train(
 torch.save(net, f'{os.environ["PYTHONPATH"]}/object_detection/trained_models/nuimages_detection_6.pt')
 
 # device: torch.device = torch.device('cuda')
-# dataset = NuImagesDataset(n_annotations=10, version='v1.0-train', device=device)
-# net = torch.load(f'{os.environ["PYTHONPATH"]}/object_detection/trained_models/nuimages_detection.pt').to(device=device)
+dataset = NuImagesDataset(n_annotations=10, version='v1.0-train', device=device)
+net = torch.load(f'{os.environ["PYTHONPATH"]}/.checkpoint/nuimages_detection/epoch10.pt').to(device=device)
 
-# X = torchvision.io.read_image(
-#     path=f'{os.environ["PYTHONPATH"]}/data/nuimages/samples/CAM_FRONT/n003-2018-01-02-11-48-43+0800__CAM_FRONT__1514865168561498.jpg'
-# ).to(device=device).float().unsqueeze(0)
+X = torchvision.io.read_image(
+    path=f'{os.environ["PYTHONPATH"]}/data/nuimages/samples/CAM_FRONT/n003-2018-01-02-11-48-43+0800__CAM_FRONT__1514865168561498.jpg'
+).to(device=device).float().unsqueeze(0)
 
-# output = predict(model=net, X=X).squeeze(0).detach()
+output = predict(model=net, X=X).squeeze(0).detach()
 
-# anchors = []
-# for anchor_tensor in output:
-#     class_label = anchor_tensor[0].item()  # Extract class label
-#     score = anchor_tensor[1].item()  # Extract detection score
-#     if class_label == -1:# or score <= 0.4:
-#         # Filter out anchors with class label -1 or score <= 0.5 (threshold level)
-#         continue
-#     anchors.append(anchor_tensor)
+anchors = []
+for anchor_tensor in output:
+    class_label = anchor_tensor[0].item()  # Extract class label
+    score = anchor_tensor[1].item()  # Extract detection score
+    if class_label == -1 or score <= 0.15:
+        # Filter out anchors with class label -1 or score <= 0.5 (threshold level)
+        continue
+    anchors.append(anchor_tensor)
 
-# anchors = torch.stack(tensors=anchors, dim=0).cpu()
-# show_boxes(
-#     input_image=X.squeeze(0).to(dtype=torch.uint8).cpu(),
-#     bboxes=anchors[:, 2:],  # bounding box coordinates.
-#     labels=[dataset.category_numeric_name_mapper[c.item()].split('.')[-1] for c in anchors[:, 0]],  # Map class labels to strings
-#     output_path='object_detection/img/nuimages.jpg',
-# )
+anchors = torch.stack(tensors=anchors, dim=0).cpu()
+show_boxes(
+    input_image=X.squeeze(0).to(dtype=torch.uint8).cpu(),
+    bboxes=anchors[:, 2:],  # bounding box coordinates.
+    labels=[dataset.category_numeric_name_mapper[c.item()].split('.')[-1] for c in anchors[:, 0]],  # Map class labels to strings
+    output_path='object_detection/img/nuimages.jpg',
+)
 
 

@@ -26,7 +26,6 @@ class BananasDataset(torch.utils.data.Dataset):
         data_dir: str = f'{os.environ["PYTHONPATH"]}/data/banana-detection',
         device: torch.device = torch.device('cpu'),
     ):
-        
         """
         Attributes:
         - n_classes (int): number of classes (= 1)
