@@ -1,6 +1,5 @@
 import os
 import typing
-from collections import defaultdict
 
 import pandas as pd
 
@@ -9,7 +8,6 @@ import torchvision
 import torch.utils.data
 
 from nuimages import NuImages
-
 
 
 class BananasDataset(torch.utils.data.Dataset):
@@ -36,6 +34,7 @@ class BananasDataset(torch.utils.data.Dataset):
         - device (torch.device): Where the data tensors should be stored
         """
 
+        super(BananasDataset, self).__init__()
         # This dataset only has 1 class (banana)
         self.n_classes = 1
 
@@ -120,6 +119,7 @@ class NuImagesDataset(torch.utils.data.Dataset):
         - device (torch.device): The device on which tensors are loaded. Defaults to CPU.
 
         """
+        super(NuImagesDataset, self).__init__()
         self.n_annotations = n_annotations
         self.device = device
         self.version = version

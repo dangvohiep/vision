@@ -6,7 +6,7 @@ import torchvision
 from object_detection import show_boxes
 from object_detection.datasets import BananasDataset, NuImagesDataset
 from object_detection.training import train, predict
-from object_detection.models import SingleShotDetection
+from object_detection.model.ssd import SingleShotDetection
 
 
 

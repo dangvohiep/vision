@@ -149,6 +149,7 @@ def train(
     at the end of each epoch if a checkpoint output directory is provided.
     """
 
+    model.train()
     train_dataloader = torch.utils.data.DataLoader(
         dataset=train_dataset,
         batch_size=train_batch_size,
@@ -242,6 +243,7 @@ def evaluate(
       the mean absolute error (MAE) for bounding box predictions, and the mean loss across all samples.
     """
 
+    model.eval()
     dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
     metrics = Accumulator()
 
