@@ -195,7 +195,7 @@ def train(
             train_loss = train_metrics['loss'] / (batch + 1)
             print(
                 f'Epoch {epoch + 1}/{n_epochs} || '
-                f'Batch {batch + 1}/{len(train_dataset) // train_batch_size + 1} || '
+                f'Batch {batch + 1}/{len(train_dataloader)} || '
                 f'train_classification_error: {train_classification_error:.2e}, '
                 f'train_bbox_mae: {train_bbox_mae:.2e}, '
                 f'train_loss: {train_loss:.2e}'

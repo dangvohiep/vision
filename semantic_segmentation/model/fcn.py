@@ -5,6 +5,8 @@ import torch.nn as nn
 
 from typing import Tuple
 
+# TESTING: enhance model's capacities
+
 class _DownSamplingBlock(nn.Module):
     """
     A class used to represent a down-sampling block in a Fully Convolutional Network (FCN).
@@ -20,9 +22,9 @@ class _DownSamplingBlock(nn.Module):
         super(_DownSamplingBlock, self).__init__()
 
         # Load the pre-trained ResNet18 model
-        pretrained_resnet18 = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.DEFAULT)
+        pretrained_resnet = torchvision.models.resnet18(weights=torchvision.models.ResNet18_Weights.DEFAULT)
         # Get all layers except the last two
-        self.__named_extractors = list(pretrained_resnet18.named_children())[:-2]
+        self.__named_extractors = list(pretrained_resnet.named_children())[:-2]
         # Add the layers to this module
         for name, module in self.__named_extractors:
             setattr(self, name, module)
@@ -88,17 +90,21 @@ class _UpSamplingBlock(nn.Module):
         self._blocks = nn.Sequential()
 
         # Create the sub-blocks
-        for i in range(5):
-            block = nn.Sequential()
-            # Add a transposed convolution layer
-            block.add_module(f'tconv{i}', nn.LazyConvTranspose2d(out_channels=out_channels, kernel_size=2, stride=2))
-            # Add a batch normalization layer
-            block.add_module(f'bn{i}', nn.LazyBatchNorm2d())
-            # Add a ReLU activation layer (except for the last sub-block)
-            if i != 4:  # No ReLU for last block
-                block.add_module(f'relu{i}', nn.ReLU(inplace=True))
-            # Add the sub-block to the main block
-            self._blocks.add_module(f'block{i}', block)
+        # TESTING: improve upsampling
+        self._blocks.add_module('conv1x1', nn.LazyConv2d(out_channels=out_channels, kernel_size=1))
+        self._blocks.add_module('tconv0', nn.LazyConvTranspose2d(out_channels=out_channels, kernel_size=64, padding=16, stride=32))
+
+        # for i in range(5):
+        #     block = nn.Sequential()
+        #     # Add a transposed convolution layer
+        #     block.add_module(f'tconv{i}', nn.LazyConvTranspose2d(out_channels=out_channels, kernel_size=2, stride=2))
+        #     # Add a batch normalization layer
+        #     block.add_module(f'bn{i}', nn.LazyBatchNorm2d())
+        #     # Add a ReLU activation layer (except for the last sub-block)
+        #     if i != 4:  # No ReLU for last block
+        #         block.add_module(f'relu{i}', nn.ReLU(inplace=True))
+        #     # Add the sub-block to the main block
+        #     self._blocks.add_module(f'block{i}', block)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -181,8 +187,9 @@ if __name__ == '__main__':
     y = net(x)
     print(y.shape)
 
-
-
-
+    # net = _DownSamplingBlock()
+    # x = torch.randn(size=(32, 3, 320, 480))
+    # y = net(x)
+    # print(y.shape)
 
 

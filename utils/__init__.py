@@ -1,5 +1,11 @@
+import os
+import pathlib
+import time
+from typing import Any, Dict
 from collections import defaultdict
-from typing import Any
+
+import torch
+import torch.nn as nn
 
 class Accumulator:
     """
@@ -7,7 +13,7 @@ class Accumulator:
     """
 
     def __init__(self) -> None:
-        self.__records: defaultdict[str, int] = defaultdict(int)
+        self.__records: defaultdict[str, float] = defaultdict(float)
 
     def add(self, **kwargs: Any) -> None:
         """
@@ -78,4 +84,81 @@ class EarlyStopping:
             bool: True if training should be stopped (patience exceeded), otherwise False.
         """
         return self.__counter >= self.patience
+
+
+class Timer:
+
+    def __init__(self):
+        self.__epoch_starts: Dict[int, float] = dict()
+        self.__epoch_ends: Dict[int, float] = dict()
+        self.__batch_starts: Dict[int, Dict[int, float]] = defaultdict(dict)
+        self.__batch_ends: Dict[int, Dict[int, float]] = defaultdict(dict)
+
+    def start_epoch(self, epoch: int) -> None:
+        self.__epoch_starts[epoch] = time.time()
+
+    def end_epoch(self, epoch: int) -> None:
+        self.__epoch_ends[epoch] = time.time()
+
+    def start_batch(self, epoch: int, batch: int = None) -> None:
+        if batch is None:
+            if self.__batch_starts[epoch]:
+                batch = max(self.__batch_starts[epoch].keys()) + 1
+            else:
+                batch = 1
+        self.__batch_starts[epoch][batch] = time.time()
+    
+    def end_batch(self, epoch: int, batch: int = None) -> None:
+        if batch is None:
+            if self.__batch_starts[epoch]:
+                batch = max(self.__batch_starts[epoch].keys())
+            else:
+                raise RuntimeError(f"no batch has started")
+        self.__batch_ends[epoch][batch] = time.time()
+    
+    def time_epoch(self, epoch: int) -> float:
+        result = self.__epoch_ends[epoch] - self.__epoch_starts[epoch]
+        if result > 0:
+            return result
+        else:
+            raise RuntimeError(f"epoch {epoch} ends before starts")
+    
+    def time_batch(self, epoch: int, batch: int) -> float:
+        result = self.__batch_ends[epoch][batch] - self.__batch_starts[epoch][batch]
+        if result > 0:
+            return result
+        else:
+            raise RuntimeError(f"batch {batch} in epoch {epoch} ends before starts")
+        
+
+class Logger:
+
+    def __init__(self, logfile: os.PathLike):
+        self.logfile = pathlib.Path(logfile)
+        os.makedirs(name=self.logfile.parent, exist_ok=True)
+        self._file = open(self.logfile, mode='w')
+
+    def log(self, epoch: int, n_epochs: int, batch: int = None, n_batches: int = None, took: float = None, **kwargs):
+        suffix = ', '.join([f'{metric}: {value:.3e}' for metric, value in kwargs.items()])
+        prefix = f'Epoch {epoch}/{n_epochs} | '
+        if batch is not None:
+            prefix += f'Batch {batch}/{n_batches} | '
+        if took is not None:
+            prefix += f'Took {took:.2f}s | '
+        logstring = prefix + suffix
+        print(logstring)
+        self._file.write(logstring + '\n')
+
+    def __del__(self):
+        self._file.close()
+
+
+class CheckPointSaver:
+
+    def __init__(self, dirpath: os.PathLike):
+        self.dirpath = pathlib.Path(dirpath)
+        os.makedirs(name=self.dirpath, exist_ok=True)
+
+    def save(self, model: nn.Module, filename: os.PathLike) -> None:
+        torch.save(obj=model, f=os.path.join(self.dirpath, filename))
 
