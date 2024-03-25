@@ -3,6 +3,7 @@ import pathlib
 import time
 from typing import Any, Dict
 from collections import defaultdict
+import datetime as dt
 
 import torch
 import torch.nn as nn
@@ -133,7 +134,10 @@ class Timer:
 
 class Logger:
 
-    def __init__(self, logfile: os.PathLike):
+    def __init__(
+        self, 
+        logfile: os.PathLike = f"{os.environ['PYTHONPATH']}/.log/{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    ):
         self.logfile = pathlib.Path(logfile)
         os.makedirs(name=self.logfile.parent, exist_ok=True)
         self._file = open(self.logfile, mode='w')

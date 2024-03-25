@@ -41,7 +41,7 @@ def train(
     train_metrics = Accumulator()
     early_stopping = EarlyStopping(patience, tolerance)
     timer = Timer()
-    logger = Logger(logfile=f"{os.environ['PYTHONPATH']}/.log/{dt.datetime.now().strftime('%Y%m%d%H%M%S')}")
+    logger = Logger()
     checkpoint_saver = CheckPointSaver(dirpath=checkpoint_dir)
 
     # loop through each epoch
@@ -53,15 +53,14 @@ def train(
             optimizer.zero_grad()
             pred_probs: torch.Tensor = model(batch_images)
             pred_labels = pred_probs.max(dim=1).indices
-            n_corrects = (pred_labels == gt_labels).sum()
+            n_corrects = (pred_labels == gt_labels).sum().item()
             n_predictions = pred_labels.numel()
             loss = loss_function(pred_probs, gt_labels).mean()
             loss.backward()
             optimizer.step()
             
             # Accumulate the metrics
-            # TESTING: accumulate item() instead of scalar tensor
-            train_metrics.add(n_correct=n_corrects.item(), n_predictions=n_predictions, loss=loss.item())
+            train_metrics.add(n_correct=n_corrects, n_predictions=n_predictions, loss=loss.item())
             train_accuracy = train_metrics['n_correct'] / train_metrics['n_predictions']
             train_loss = train_metrics['loss'] / batch
             timer.end_batch(epoch=epoch)
@@ -102,13 +101,12 @@ def evaluate(
     for batch, (batch_images, gt_labels) in enumerate(dataloader):    # (N, 3, 256, 256), (N, 1, 5)
         pred_probs: torch.Tensor = model(batch_images)
         pred_labels = pred_probs.max(dim=1).indices
-        n_corrects = (pred_labels == gt_labels).sum()
+        n_corrects = (pred_labels == gt_labels).sum().item()
         n_predictions = pred_labels.numel()
         loss = loss_function(pred_probs, gt_labels).mean()
 
         # Accumulate the metrics
-        # TESTING: accumulate item() instead of scalar tensor
-        metrics.add(n_corrects=n_corrects.item(), n_predictions=n_predictions, loss=loss.item())
+        metrics.add(n_corrects=n_corrects, n_predictions=n_predictions, loss=loss.item())
 
     # Compute the aggregate metrics
     accuracy = metrics['n_corrects'] / metrics['n_predictions']
@@ -124,7 +122,6 @@ def predict(
 ) -> None:
 
     # FIXME: create save_dir if not exists
-
     model.eval()
     pred_probs: np.ndarray = model(X).detach().cpu().numpy()
     pred_labels = pred_probs.argmax(axis=1) # Get the predicted labels
