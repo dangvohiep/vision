@@ -1,4 +1,4 @@
-import typing
+from typing import List, Tuple, Callable, Union, Optional
 from PIL.Image import Image
 
 import matplotlib.pyplot as plt
@@ -6,72 +6,76 @@ import matplotlib.patches
 import matplotlib.axes
 
 import torch
-import torch.utils.data
 import torchvision.transforms.functional as F
 
 
-def generate_anchors(data: torch.Tensor, sizes: typing.List[float], ratios: typing.List[float]) -> torch.Tensor:
+def generate_anchors(data: torch.Tensor, sizes: List[float], ratios: List[float]) -> torch.Tensor:
     """
     Generate anchor boxes with different shapes centered on each pixel of the input feature map.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - data (torch.Tensor): The input feature map with shape (batch_size, channels, height, width).
-    - sizes (List[float]): A list of sizes (relative to the input feature map dimensions) for the anchor boxes.
-    - ratios (List[float]): A list of aspect ratios (width / height) for the anchor boxes.
+        - data (torch.Tensor): The input feature map with shape (batch_size, channels, height, width).
+        - sizes (List[float]): A list of sizes (relative to the input feature map dimensions) for the anchor boxes.
+        - ratios (List[float]): A list of aspect ratios (width / height) for the anchor boxes.
 
     Returns:
-    - torch.Tensor: A tensor containing the coordinates of the generated anchor boxes for each pixel.
-      The shape of the tensor is (batch_size, n_anchors, 4), where n_anchors is the total number of anchor
-      boxes generated, and each anchor box is represented by 4 coordinates (xmin, ymin, xmax, ymax).
+        - torch.Tensor: A tensor containing the coordinates of the generated anchor boxes for each pixel.
+        The shape of the tensor is (batch_size, n_anchors, 4), where n_anchors is the total number of anchor
+        boxes generated, and each anchor box is represented by 4 coordinates (xmin, ymin, xmax, ymax).
 
     Note:
-    - `len(sizes) + len(ratios) - 1` anchor boxes are generated for each pixel of the input feature map. 
-      Each box is centered at the pixel and has a shape determined by the specified sizes and ratios.
-    - The sizes should be specified relative to the input feature map's dimensions, and the ratios
-      determine the width and height of the boxes based on these sizes.
+        - `len(sizes) + len(ratios) - 1` anchor boxes are generated for each pixel of the input feature map. 
+        Each box is centered at the pixel and has a shape determined by the specified sizes and ratios.
+        - The sizes should be specified relative to the input feature map's dimensions, and the ratios
+        determine the width and height of the boxes based on these sizes.
     """
     # Extract batch size:
-    batch_size = data.shape[0]
+    batch_size: int = data.shape[0]
     # Extract the height and width of the input feature map
-    input_height, input_width = data.shape[-2:]
+    input_height: int = data.shape[-2]
+    input_width: int = data.shape[-1]
     # Get the computation device, number of sizes and ratios
-    device, num_sizes, num_ratios = data.device, len(sizes), len(ratios)
+    device: torch.device = data.device
+    num_sizes: int = len(sizes)
+    num_ratios: int = len(ratios)
     # Calculate the number of boxes per pixel
-    boxes_per_pixel = (num_sizes + num_ratios - 1)
+    boxes_per_pixel: int = (num_sizes + num_ratios - 1)
     
     # Convert the sizes and ratios to tensors
-    size_tensor = torch.tensor(sizes, device=device)
-    ratio_tensor = torch.tensor(ratios, device=device)
+    size_tensor: torch.Tensor = torch.tensor(sizes, device=device)
+    ratio_tensor: torch.Tensor = torch.tensor(ratios, device=device)
     
     # Offsets to move the anchor to the center of a pixel
-    offset_h, offset_w = 0.5, 0.5
+    offset_h: float = 0.5
+    offset_w: float = 0.5
     # Scaled steps in y and x axes
-    steps_h = 1.0 / input_height
-    steps_w = 1.0 / input_width
+    steps_h: float = 1.0 / input_height
+    steps_w: float = 1.0 / input_width
 
     # Generate all center points for the anchor boxes
-    center_h = (torch.arange(input_height, device=device) + offset_h) * steps_h
-    center_w = (torch.arange(input_width, device=device) + offset_w) * steps_w
+    center_h: torch.Tensor = (torch.arange(input_height, device=device) + offset_h) * steps_h
+    center_w: torch.Tensor = (torch.arange(input_width, device=device) + offset_w) * steps_w
+    shift_x: torch.Tensor
+    shift_y: torch.Tensor
     shift_y, shift_x = torch.meshgrid(center_h, center_w, indexing='ij')
-    shift_y, shift_x = shift_y.reshape(-1), shift_x.reshape(-1)
+    shift_x: torch.Tensor = shift_x.reshape(-1)
+    shift_y: torch.Tensor = shift_y.reshape(-1)
 
     # Generate widths and heights for anchor boxes
-    sr_combination_1 = size_tensor[0] * torch.sqrt(ratio_tensor[1:])    # s1r2, s1r3, s1r4, ...
-    sr_combination_2 = size_tensor * torch.sqrt(ratio_tensor[0])    # s1r1, s2r1, s3r1, ...
-    w = torch.cat(tensors=(sr_combination_1, sr_combination_2)) * input_height / input_width
+    sr_combination_1: torch.Tensor = size_tensor[0] * torch.sqrt(ratio_tensor[1:])
+    sr_combination_2: torch.Tensor = size_tensor * torch.sqrt(ratio_tensor[0])
+    w: torch.Tensor = torch.cat(tensors=(sr_combination_1, sr_combination_2), dim=0) * input_height / input_width
 
-    sr_combination_1 = size_tensor[0] / torch.sqrt(ratio_tensor[1:])    # s1r2, s1r3, s1r4, ...
-    sr_combination_2 = size_tensor / torch.sqrt(ratio_tensor[0])    # s1r1, s2r1, s3r1, ...
-    h = torch.cat(tensors=(sr_combination_1, sr_combination_2))
+    sr_combination_1: torch.Tensor = size_tensor[0] / torch.sqrt(ratio_tensor[1:])
+    sr_combination_2: torch.Tensor = size_tensor / torch.sqrt(ratio_tensor[0])
+    h: torch.Tensor = torch.cat(tensors=(sr_combination_1, sr_combination_2), dim=0)
     
     # Compute half heights and half widths for anchor manipulations
-    anchor_manipulations = torch.stack(tensors=(-w, -h, w, h)).T.repeat(input_height * input_width, 1) / 2
+    anchor_manipulations: torch.Tensor = torch.stack(tensors=(-w, -h, w, h)).t().repeat(input_height * input_width, 1) / 2
 
     # Generate a grid of all anchor box centers with `boxes_per_pixel` repeats
-    out_grid = torch.stack(tensors=[shift_x, shift_y, shift_x, shift_y], dim=1).repeat_interleave(boxes_per_pixel, dim=0)
-    output = out_grid + anchor_manipulations
+    out_grid: torch.Tensor = torch.stack(tensors=[shift_x, shift_y, shift_x, shift_y], dim=1).repeat_interleave(boxes_per_pixel, dim=0)
+    output: torch.Tensor = out_grid + anchor_manipulations
 
     # Repeat the tensor 100 times along the batch dimension, and return
     return output.unsqueeze(0).repeat(batch_size, 1, 1)
@@ -82,25 +86,26 @@ def box_corner_to_center(boxes: torch.Tensor) -> torch.Tensor:
     Convert bounding box coordinates from corner representation (upper-left, lower-right)
     to center representation (center x, center y, width, height).
 
-    Reference: https://d2l.ai/chapter_computer-vision/bounding-box.html
-
     Parameters:
-    - boxes (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
-      represented by its corner coordinates (x1, y1, x2, y2).
+        - boxes (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
+        represented by its corner coordinates (x1, y1, x2, y2).
 
     Returns:
-    - torch.Tensor: A tensor of shape (N, 4) where each box is represented by its center coordinates
-      (center x, center y), width, and height.
+        - torch.Tensor: A tensor of shape (N, 4) where each box is represented by its center coordinates
+        (center x, center y), width, and height.
     """
     # Unpack the corner coordinates
-    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    x1: torch.Tensor = boxes[:, 0]
+    y1: torch.Tensor = boxes[:, 1]
+    x2: torch.Tensor = boxes[:, 2]
+    y2: torch.Tensor = boxes[:, 3]
     # Calculate center x, center y, width, and height
-    cx = (x1 + x2) / 2
-    cy = (y1 + y2) / 2
-    w = x2 - x1
-    h = y2 - y1
+    cx: torch.Tensor = (x1 + x2) / 2
+    cy: torch.Tensor = (y1 + y2) / 2
+    w: torch.Tensor = x2 - x1
+    h: torch.Tensor = y2 - y1
     # Stack the new representation along the second dimension
-    boxes = torch.stack((cx, cy, w, h), axis=1)
+    boxes: torch.Tensor = torch.stack((cx, cy, w, h), axis=1)
     return boxes
 
 
@@ -109,25 +114,26 @@ def box_center_to_corner(boxes: torch.Tensor) -> torch.Tensor:
     Convert bounding box coordinates from center representation (center x, center y, width, height)
     to corner representation (upper-left, lower-right).
 
-    Reference: https://d2l.ai/chapter_computer-vision/bounding-box.html
-
     Parameters:
-    - boxes (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
-      represented by its center coordinates (center x, center y), width, and height.
+        - boxes (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
+        represented by its center coordinates (center x, center y), width, and height.
 
     Returns:
-    - torch.Tensor: A tensor of shape (N, 4) where each box is represented by its corner coordinates
-      (x1, y1, x2, y2).
+        - torch.Tensor: A tensor of shape (N, 4) where each box is represented by its corner coordinates
+        (x1, y1, x2, y2).
     """
     # Unpack the center coordinates, width, and height
-    cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    cx: torch.Tensor = boxes[:, 0]
+    cy: torch.Tensor = boxes[:, 1]
+    w: torch.Tensor = boxes[:, 2]
+    h: torch.Tensor = boxes[:, 3]
     # Calculate the corner coordinates
-    x1 = cx - 0.5 * w
-    y1 = cy - 0.5 * h
-    x2 = cx + 0.5 * w
-    y2 = cy + 0.5 * h
+    x1: torch.Tensor = cx - 0.5 * w
+    y1: torch.Tensor = cy - 0.5 * h
+    x2: torch.Tensor = cx + 0.5 * w
+    y2: torch.Tensor = cy + 0.5 * h
     # Stack the new representation along the second dimension
-    boxes = torch.stack((x1, y1, x2, y2), axis=1)
+    boxes: torch.Tensor = torch.stack((x1, y1, x2, y2), axis=1)
     return boxes
 
 
@@ -138,48 +144,45 @@ def compute_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
     IoU is a measure of the overlap between two bounding boxes. This function
     calculates the IoU for each pair of boxes in `boxes1` and `boxes2`.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - boxes1 (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
-      represented by its (x1, y1, x2, y2) coordinates.
-    - boxes2 (torch.Tensor): A tensor of shape (M, 4) containing M boxes, where each box is
-      represented by its (x1, y1, x2, y2) coordinates.
+        - boxes1 (torch.Tensor): A tensor of shape (N, 4) containing N boxes, where each box is
+        represented by its (x1, y1, x2, y2) coordinates.
+        - boxes2 (torch.Tensor): A tensor of shape (M, 4) containing M boxes, where each box is
+        represented by its (x1, y1, x2, y2) coordinates.
 
     Returns: 
-    - torch.Tensor: A tensor of shape (N, M) where each element [i, j] is the IoU of
-      the i-th box in `boxes1` and the j-th box in `boxes2`.
+        - torch.Tensor: A tensor of shape (N, M) where each element [i, j] is the IoU of
+        the i-th box in `boxes1` and the j-th box in `boxes2`.
 
     Note:
-    - The coordinates of the boxes are expected to be (x1, y1, x2, y2), where
-      (x1, y1) is the upper left corner, and (x2, y2) is the lower right corner.
+        - The coordinates of the boxes are expected to be (x1, y1, x2, y2), where
+        (x1, y1) is the upper left corner, and (x2, y2) is the lower right corner.
     """
     # Function to calculate the area of boxes
-    box_area = lambda boxes: ((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]))
+    box_area: Callable[[torch.Tensor], torch.Tensor] = lambda boxes: (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     
     # Calculate the area of each box in both sets
-    areas1 = box_area(boxes1)   # shape = (N,)
-    areas2 = box_area(boxes2)   # shape = (M,)
+    areas1: torch.Tensor = box_area(boxes1)   # shape = (N,)
+    areas2: torch.Tensor = box_area(boxes2)   # shape = (M,)
     
     # Calculate intersections
     # Determine the coordinates of the intersection rectangles' upper left and lower right corners
-    inter_upperlefts = torch.maximum(
+    inter_upperlefts: torch.Tensor = torch.maximum(
         input=boxes1[:, None, :2],  # shape = (N, 1, 2)
         other=boxes2[:, :2]         # implicitly treated as shape = (1, M, 2)
     )   # shape = (N, M, 2)
-    inter_lowerrights = torch.minimum(
+    inter_lowerrights: torch.Tensor = torch.minimum(
         input=boxes1[:, None, 2:],  # shape = (N, 1, 2)
         other=boxes2[:, 2:]         # implicitly treated as shape = (1, M, 2)
     )   # shape = (N, M, 2)
     # Compute width and height of the intersections
-    inters_wh = (inter_lowerrights - inter_upperlefts) # shape = (N, M, 2)
+    inters_wh: torch.Tensor = inter_lowerrights - inter_upperlefts # shape = (N, M, 2)
     # Ensure that intersection weigth and height are non-negative (happen when 2 boxes do not intersect)
-    inters_wh = inters_wh.clamp(min=0)    # shape = (N, M, 2)
+    inters_wh: torch.Tensor = inters_wh.clamp(min=0)    # shape = (N, M, 2)
     # Calculate the area of the intersection rectangles
-    inter_areas = inters_wh[:, :, 0] * inters_wh[:, :, 1] # shape = (N, M)
+    inter_areas: torch.Tensor = inters_wh[:, :, 0] * inters_wh[:, :, 1] # shape = (N, M)
     # Calculate area of the unions
-    union_areas = areas1[:, None] + areas2 - inter_areas    # shape = (N, M)
-    
+    union_areas: torch.Tensor = areas1[:, None] + areas2 - inter_areas    # shape = (N, M)
     # Compute IoU by dividing the intersection area by the union area
     return inter_areas / union_areas    # shape = (N, M)
 
@@ -194,35 +197,36 @@ def assign_bbox_to_anchor(
     An anchor is assigned to a ground-truth box if their IoU exceeds a specified threshold, otherwise it is considered 
     background (assigned to -1)
     
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - gt_bboxes (Tensor): A tensor of shape (N, 4) containing N ground-truth bounding boxes,
-      where each box is represented by its (x1, y1, x2, y2) coordinates.
-    - anchors (Tensor): A tensor of shape (M, 4) containing M anchor boxes, where each box is
-      represented by its (x1, y1, x2, y2) coordinates.
-    - iou_threshold (float, optional): The IoU threshold to use for matching anchors to ground-truth boxes.
-      Defaults to 0.5.
+        - gt_bboxes (Tensor): A tensor of shape (N, 4) containing N ground-truth bounding boxes,
+        where each box is represented by its (x1, y1, x2, y2) coordinates.
+        - anchors (Tensor): A tensor of shape (M, 4) containing M anchor boxes, where each box is
+        represented by its (x1, y1, x2, y2) coordinates.
+        - iou_threshold (float, optional): The IoU threshold to use for matching anchors to ground-truth boxes.
+        Defaults to 0.5.
 
     Returns:
-    - Tensor: A tensor of shape (M,) where each element is the index of the ground-truth bounding box assigned
-      to the corresponding anchor. If an anchor is not assigned to any ground-truth box, its value is -1.
+        - Tensor: A tensor of shape (M,) where each element is the index of the ground-truth bounding box assigned
+        to the corresponding anchor. If an anchor is not assigned to any ground-truth box, its value is -1.
     """
-    n_gt_boxes = gt_bboxes.shape[0]     # N
-    n_anchors = anchors.shape[0]        # M
+    n_gt_boxes: int = gt_bboxes.shape[0]     # N
+    n_anchors: int = anchors.shape[0]        # M
 
     # Compute the IoU between all pairs of anchors and ground-truth boxes
-    jaccard = compute_iou(boxes1=anchors, boxes2=gt_bboxes) # shape = (M, N)
+    jaccard: torch.Tensor = compute_iou(boxes1=anchors, boxes2=gt_bboxes) # shape = (M, N)
 
     # Initialize the mapping of anchors to ground-truth boxes with -1 (unassigned)
-    anchors_bbox_map = torch.full(size=(n_anchors,), fill_value=-1, dtype=torch.long, device=gt_bboxes.device)
-
+    anchors_bbox_map: torch.Tensor = torch.full(
+        size=(n_anchors,), fill_value=-1, dtype=torch.long, device=gt_bboxes.device
+    )
     # Step 1: Assign each anchor to the ground-truth box with the highest IoU, if it exceeds the threshold
+    max_ious: torch.Tensor
+    indices: torch.Tensor
     max_ious, indices = torch.max(jaccard, dim=1)   # both have shape = (M,)
     # Index of all anchors having max_iou >= iou_threshold:
-    anchor_i = torch.nonzero(max_ious >= iou_threshold).reshape(-1) # shape = (K,) with K <= M
+    anchor_i: torch.Tensor = torch.nonzero(max_ious >= iou_threshold).reshape(-1) # shape = (K,) with K <= M
     # Index of according bounding boxes:
-    bbox_j = indices[max_ious >= iou_threshold] # shape = (K,)
+    bbox_j: torch.Tensor = indices[max_ious >= iou_threshold] # shape = (K,)
     # Map each anchor_i with one bbox_j
     anchors_bbox_map[anchor_i] = bbox_j     # shape = (M,)
 
@@ -230,9 +234,9 @@ def assign_bbox_to_anchor(
     # (the one with the highest IoU, regardless of iou_threshold)
     for _ in range(n_gt_boxes):
         # Find the anchor/ground-truth pair with the highest IoU
-        max_idx = torch.argmax(jaccard)     # it flattens `jaccard` before find the index -> shape = ()
-        bbox_idx = (max_idx % n_gt_boxes).long()      # column index
-        anchor_idx = (max_idx // n_gt_boxes).long()   # row index
+        max_idx: torch.Tensor = torch.argmax(jaccard)     # it flattens `jaccard` before find the index -> shape = ()
+        bbox_idx: torch.Tensor = (max_idx % n_gt_boxes).long()      # column index
+        anchor_idx: torch.Tensor = (max_idx // n_gt_boxes).long()   # row index
         anchors_bbox_map[anchor_idx] = bbox_idx     # map each anchor_i with one bbox_j
         # Prevent further assignment to the chosen ground-truth box and anchor
         jaccard[:, bbox_idx] = -1
@@ -241,7 +245,7 @@ def assign_bbox_to_anchor(
     return anchors_bbox_map
 
 
-def compute_groundtruth(anchors: torch.Tensor, labels: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def compute_groundtruth(anchors: torch.Tensor, labels: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Process anchor boxes for a batch of N images, assigning class labels and calculating offsets 
     relative to the closest ground-truth bounding boxes.
@@ -250,16 +254,14 @@ def compute_groundtruth(anchors: torch.Tensor, labels: torch.Tensor) -> typing.T
     (i.e., assigned to a ground-truth box) or a negative example (i.e., considered background). It also
     calculates the offset between each positive anchor box and its corresponding ground-truth box.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - anchors (torch.Tensor): A tensor of shape (N, M, 4) containing the anchor boxes for each of N images,
-      with M anchor boxes per image. Each anchor box is represented by its corner coordinates [x1, y1, x2, y2].
-    - labels (torch.Tensor): A tensor of shape (N, G, 5) for N images, with G ground-truth objects per image.
-      Each ground-truth box is represented by a class label and its corner coordinates [class, x1, y1, x2, y2].
+        - anchors (torch.Tensor): A tensor of shape (N, M, 4) containing the anchor boxes for each of N images,
+        with M anchor boxes per image. Each anchor box is represented by its corner coordinates [x1, y1, x2, y2].
+        - labels (torch.Tensor): A tensor of shape (N, G, 5) for N images, with G ground-truth objects per image.
+        Each ground-truth box is represented by a class label and its corner coordinates [class, x1, y1, x2, y2].
 
     Returns:
-    - Tuple containing three tensors:
+        - Tuple containing three tensors:
         1. bbox_offset (torch.Tensor): Offsets (dx, dy, dw, dh) for each anchor box, shaped (N, M, 4).
         2. bbox_mask (torch.Tensor): A binary mask indicating which anchor boxes are positive examples,
            shaped (N, M, 4).
@@ -267,51 +269,54 @@ def compute_groundtruth(anchors: torch.Tensor, labels: torch.Tensor) -> typing.T
            shaped (N, M).
 
     The function supports batch processing of multiple images, ensuring efficient computation across a dataset.
+    
     """
+    batch_size: torch.Tensor = anchors.shape[0]   # N
+    n_anchors: torch.Tensor = anchors.shape[1]    # M
 
-    batch_size = anchors.shape[0]   # N
-    n_anchors = anchors.shape[1]    # M
+    batch_offsets: List[torch.Tensor] = []
+    batch_masks: List[torch.Tensor] = []
+    batch_class_labels: List[torch.Tensor] = []
 
-    batch_offsets, batch_masks, batch_class_labels = [], [], []
-
+    n: int
     for n in range(batch_size):
-        image_labels = labels[n, :, :]      # shape = (G, 5)
-        image_anchors = anchors[n, :, :]    # shape = (M, 4)
+        image_labels: torch.Tensor = labels[n, :, :]      # shape = (G, 5)
+        image_anchors: torch.Tensor = anchors[n, :, :]    # shape = (M, 4)
         # Assign each anchor box to a ground-truth bounding box
-        anchors_bbox_map = assign_bbox_to_anchor(
+        anchors_bbox_map: torch.Tensor = assign_bbox_to_anchor(
             gt_bboxes=image_labels[:, 1:],  # shape = (G, 4)
             anchors=image_anchors,          # shape = (M, 4)
         )                                   # shape = (M,)
         # Create a mask to identify anchors that are assigned bounding box coordinates
-        bbox_mask = (anchors_bbox_map >= 0).float()         # shape = (M,)
+        bbox_mask: torch.Tensor = (anchors_bbox_map >= 0).float()         # shape = (M,)
         # filter padding bounding boxes (set bbox_mask to 0 for padding bboxes)
-        padding_indexes = (image_labels[:, 0] < 0).nonzero(as_tuple=True)[0]
-        padding_mask = torch.isin(anchors_bbox_map, padding_indexes)
+        padding_indexes: torch.Tensor = (image_labels[:, 0] < 0).nonzero(as_tuple=True)[0]
+        padding_mask: torch.Tensor = torch.isin(anchors_bbox_map, padding_indexes)
         bbox_mask[padding_mask] = 0
-        bbox_mask = bbox_mask.unsqueeze(-1).repeat(1, 4)    # shape = (M, 4)
+        bbox_mask: torch.Tensor = bbox_mask.unsqueeze(-1).repeat(1, 4)    # shape = (M, 4)
         # Initialize tensors for class labels and assigned bounding box coordinates
-        class_labels = torch.zeros(n_anchors, dtype=torch.long, device=anchors.device)             # shape = (M,)
-        assigned_bboxes = torch.zeros((n_anchors, 4), dtype=labels.dtype, device=labels.device)    # shape = (M, 4)
+        class_labels: torch.Tensor = torch.zeros(n_anchors, dtype=torch.long, device=anchors.device)    # shape = (M,)
+        assigned_bboxes: torch.Tensor = torch.zeros((n_anchors, 4), dtype=labels.dtype, device=labels.device)   # shape = (M, 4)
 
         # Update class labels and coordinates for assigned bounding boxes
         # Find the indices of anchors that are mapped with objects (not background)
-        indices_true = torch.nonzero(anchors_bbox_map >= 0, as_tuple=False)     # shape = (K, 1) with G <= K <= M
-        bbox_indices = anchors_bbox_map[indices_true]   # shape = (K, 1)
+        indices_true: torch.Tensor = torch.nonzero(anchors_bbox_map >= 0, as_tuple=False)   # shape = (K, 1) with G <= K <= M
+        bbox_indices: torch.Tensor = anchors_bbox_map[indices_true]   # shape = (K, 1)
         # Increment class labels by 1 to account for background as class 0
-        class_labels[indices_true] = image_labels[bbox_indices, 0].long() + 1   # shape = (K, 1), but class_labels still has shape = (M,)
-        assigned_bboxes[indices_true] = image_labels[bbox_indices, 1:]      # shape = (K, 1, 4), but assigned_bboxes still has shape = (M, 4)
+        class_labels[indices_true] = image_labels[bbox_indices, 0].long() + 1 # shape = (K, 1), but class_labels still has shape = (M,)
+        assigned_bboxes[indices_true] = image_labels[bbox_indices, 1:] # shape = (K, 1, 4), but assigned_bboxes still has shape = (M, 4)
 
         # Calculate offsets for anchor boxes relative to their assigned ground-truth boxes
-        offset = offset_boxes(anchors=image_anchors, assigned_bboxes=assigned_bboxes) * bbox_mask     # shape = (M, 4)
+        offset: torch.Tensor = offset_boxes(anchors=image_anchors, assigned_bboxes=assigned_bboxes) * bbox_mask # shape = (M, 4)
 
         # Append to the processed batch
         batch_class_labels.append(class_labels)
         batch_masks.append(bbox_mask)
         batch_offsets.append(offset)
 
-    bbox_offset = torch.stack(batch_offsets, dim=0)
-    bbox_mask = torch.stack(batch_masks, dim=0)
-    class_labels = torch.stack(batch_class_labels, dim=0)
+    bbox_offset: torch.Tensor = torch.stack(batch_offsets, dim=0)
+    bbox_mask: torch.Tensor = torch.stack(batch_masks, dim=0)
+    class_labels: torch.Tensor = torch.stack(batch_class_labels, dim=0)
 
     return (bbox_offset, bbox_mask, class_labels)
 
@@ -321,18 +326,16 @@ def offset_boxes(anchors: torch.Tensor, assigned_bboxes: torch.Tensor) -> torch.
     Calculate the offsets needed to transform anchor boxes to match assigned ground-truth bounding boxes.
     The transformation is based on the center coordinates and the size of the boxes.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - anchors (Tensor): A tensor of shape (N, 4) containing N anchor boxes, where each box is
-      represented by its corner coordinates (x1, y1, x2, y2).
-    - assigned_bboxes (Tensor): A tensor of shape (N, 4) containing N ground-truth bounding boxes
-      assigned to each anchor, represented by corner coordinates (x1, y1, x2, y2).
+        - anchors (Tensor): A tensor of shape (N, 4) containing N anchor boxes, where each box is
+        represented by its corner coordinates (x1, y1, x2, y2).
+        - assigned_bboxes (Tensor): A tensor of shape (N, 4) containing N ground-truth bounding boxes
+        assigned to each anchor, represented by corner coordinates (x1, y1, x2, y2).
 
     Returns:
-    - Tensor: A tensor of shape (N, 4) where each row contains the offsets (dx, dy, dw, dh)
-      required to transform the corresponding anchor box to its assigned ground-truth box.
-      Here, (dx, dy) are the center offsets, and (dw, dh) are the width and height offsets.
+        - Tensor: A tensor of shape (N, 4) where each row contains the offsets (dx, dy, dw, dh)
+        required to transform the corresponding anchor box to its assigned ground-truth box.
+        Here, (dx, dy) are the center offsets, and (dw, dh) are the width and height offsets.
     """
     if anchors.shape[0] != assigned_bboxes.shape[0]:
         raise ValueError(
@@ -340,19 +343,15 @@ def offset_boxes(anchors: torch.Tensor, assigned_bboxes: torch.Tensor) -> torch.
             f"got {anchors.shape[0]} and {assigned_bboxes.shape[0]}"
         )
     # Convert anchor and assigned boxes from corner to center format
-    anchors = box_corner_to_center(anchors)
-    assigned_bboxes = box_corner_to_center(assigned_bboxes)
-
+    anchors: torch.Tensor = box_corner_to_center(anchors)
+    assigned_bboxes: torch.Tensor = box_corner_to_center(assigned_bboxes)
     # Calculate offsets for center coordinates
-    offset_xy = 10 * (assigned_bboxes[:, :2] - anchors[:, :2]) / anchors[:, 2:] # shape = (N, 2)
-
+    offset_xy: torch.Tensor = 10 * (assigned_bboxes[:, :2] - anchors[:, :2]) / anchors[:, 2:] # shape = (N, 2)
     # Calculate offsets for width and height
     # Use a small constant to ensure numerical stability
-    offset_wh = 5 * torch.log(1e-6 + assigned_bboxes[:, 2:] / anchors[:, 2:])   # shape = (N, 2)
-
+    offset_wh: torch.Tensor = 5 * torch.log(1e-6 + assigned_bboxes[:, 2:] / anchors[:, 2:])   # shape = (N, 2)
     # Concatenate the offset components to form the complete offset vector for each box
-    offset = torch.cat([offset_xy, offset_wh], axis=1)  # shape = (N, 4)
-
+    offset: torch.Tensor = torch.cat([offset_xy, offset_wh], axis=1)  # shape = (N, 4)
     return offset
 
 
@@ -363,33 +362,28 @@ def offset_inverse(anchors: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor
     This function applies the inverse of the offset transformation used during model training,
     converting predicted offsets back into bounding box coordinates.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - anchors (torch.Tensor): A tensor of shape (N, 4) containing N anchor boxes, where each box is
-      represented by its corner coordinates (x1, y1, x2, y2).
-    - offsets (torch.Tensor): A tensor of shape (N, 4) containing N offsets for the
-      anchor boxes. Offsets are in the format (dx, dy, dw, dh).
+        - anchors (torch.Tensor): A tensor of shape (N, 4) containing N anchor boxes, where each box is
+        represented by its corner coordinates (x1, y1, x2, y2).
+        - offsets (torch.Tensor): A tensor of shape (N, 4) containing N offsets for the
+        anchor boxes. Offsets are in the format (dx, dy, dw, dh).
 
     Returns:
-    - torch.Tensor: A tensor of shape (N, 4) containing the predicted bounding boxes, represented
-      by their corner coordinates (x1, y1, x2, y2).
+        - torch.Tensor: A tensor of shape (N, 4) containing the predicted bounding boxes, represented
+        by their corner coordinates (x1, y1, x2, y2).
 
     The function converts anchor boxes from corner to center representation, applies the predicted
     offsets to scale and move the centers, and then converts the boxes back to corner representation.
     """
     # Convert anchor boxes from corner to center representation
-    anchors = box_corner_to_center(anchors)
-    
+    anchors: torch.Tensor = box_corner_to_center(anchors)
     # Apply offsets to the anchor boxes
     # Adjust position based on the predicted offsets (scaled by 10 for x, y)
-    xy = (offsets[:, :2] * anchors[:, 2:] / 10) + anchors[:, :2]
+    xy: torch.Tensor = (offsets[:, :2] * anchors[:, 2:] / 10) + anchors[:, :2]
     # Adjust size based on the predicted offsets (scaled by 5 for width, height)
-    wh = torch.exp(offsets[:, 2:] / 5) * anchors[:, 2:]
-    
+    wh: torch.Tensor = torch.exp(offsets[:, 2:] / 5) * anchors[:, 2:]
     # Concatenate the adjusted position and size back into a single tensor
-    boxes = torch.cat((xy, wh), axis=1)
-    
+    boxes: torch.Tensor = torch.cat((xy, wh), axis=1)
     # Return the corner representation of the boxes
     return box_center_to_corner(boxes)
 
@@ -397,8 +391,6 @@ def offset_inverse(anchors: torch.Tensor, offsets: torch.Tensor) -> torch.Tensor
 def non_maximum_supression(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float) -> torch.Tensor:
     """
     Perform Non-Maximum Suppression (NMS) on predicted bounding boxes.
-
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
 
     NMS filters out overlapping bounding boxes based on their Intersection over Union (IoU) scores,
     keeping only the bounding box with the highest confidence score in each group of overlapping boxes.
@@ -417,26 +409,23 @@ def non_maximum_supression(boxes: torch.Tensor, scores: torch.Tensor, iou_thresh
     removes boxes that overlap with a higher scoring box more than the specified IoU threshold.
     """
     # Sort boxes by their scores in descending order
-    B = torch.argsort(scores, dim=-1, descending=True)  # contains the index for the boxes
-    keep = []  # List to hold indices of boxes to keep
+    B: torch.Tensor = torch.argsort(scores, dim=-1, descending=True)  # contains the index for the boxes, shape = (N,)
+    keep: List[torch.Tensor] = []
 
     # Iterate over boxes in order of descending score
     while B.numel() > 0:
-        i = B[0]  # Index of the current box with the highest score
+        i: torch.Tensor = B[0]  # Index of the current box with the highest score, shape = ()
         keep.append(i)  # Always keep the current box
         if B.numel() == 1: break  # Stop if only one box is left
-
         # Compute IoU of the current box with all other boxes
-        iou = compute_iou(
+        iou: torch.Tensor = compute_iou(
             boxes1=boxes[i, :].reshape(-1, 4),      # shape = (1, 4)
             boxes2=boxes[B[1:], :].reshape(-1, 4)   # shape = (N-1, 4)
         ).reshape(-1)   # shape (N-1,)
-        
         # Find indices of boxes with IoU less than the threshold (these are not suppressed)
-        inds = torch.nonzero(iou <= iou_threshold).reshape(-1)  # shape (K,) with K <= N-1
-        
+        inds: torch.Tensor = torch.nonzero(iou <= iou_threshold).reshape(-1)  # shape (K,) with K <= N-1
         # Update the list of boxes by removing suppressed boxes
-        B = B[inds + 1]  # +1 adjusts indices since B[1:] was used for IoU calculation
+        B: torch.Tensor = B[inds + 1]  # +1 adjusts indices since B[1:] was used for IoU calculation
 
     # Return indices of the boxes to be kept, ensuring the tensor is on the same device as the input boxes
     return torch.tensor(keep, device=boxes.device)
@@ -468,32 +457,41 @@ def filter_predictions(
       suppressed boxes.
       
     """
-    batch_size = cls_probs.shape[0]
-    n_anchors = cls_probs.shape[1]
+    batch_size: int = cls_probs.shape[0]
+    n_anchors: int = cls_probs.shape[1]
 
-    batch_result = []
+    batch_results: List[torch.Tensor] = []
 
+    i: int
     for i in range(batch_size):
         # Process each image in the batch
-        image_anchors = anchors[i]
-        cls_probs = cls_probs[i]
-        pred_offsets = pred_offsets[i]
+        image_anchors: torch.Tensor = anchors[i]
+        cls_probs: torch.Tensor = cls_probs[i]
+        pred_offsets: torch.Tensor = pred_offsets[i]
 
         # Find the maximum class probability (excluding background) and its index (class ID)
+        confidence_scores: torch.Tensor
+        class_id: torch.Tensor
         confidence_scores, class_id = torch.max(cls_probs[:, 1:], dim=1)  # Exclude background class
 
         # Predict bounding boxes using the inverse offset transformation
-        predicted_bboxes = offset_inverse(anchors=image_anchors, offsets=pred_offsets)
+        predicted_bboxes: torch.Tensor = offset_inverse(anchors=image_anchors, offsets=pred_offsets)
 
         # Apply Non-Maximum Suppression to filter overlapping boxes
         # Assuming non_maximum_suppression function supports batch processing and is adapted accordingly
-        keep = non_maximum_supression(boxes=predicted_bboxes, scores=confidence_scores, iou_threshold=nms_threshold)
-
+        keep: torch.Tensor = non_maximum_supression(
+            boxes=predicted_bboxes, scores=confidence_scores, iou_threshold=nms_threshold
+        )
         # Initialize arrays to mark all as background initially
-        final_class_ids = torch.full((n_anchors,), -1, dtype=torch.long, device=anchors.device)
-        final_confidence_scores = torch.zeros((n_anchors,), dtype=torch.float32, device=anchors.device)
-        final_bboxes = torch.zeros((n_anchors, 4), dtype=torch.float32, device=anchors.device)
-
+        final_class_ids: torch.Tensor = torch.full(
+            (n_anchors,), -1, dtype=torch.long, device=anchors.device
+        )
+        final_confidence_scores: torch.Tensor = torch.zeros(
+            (n_anchors,), dtype=torch.float32, device=anchors.device
+        )
+        final_bboxes: torch.Tensor = torch.zeros(
+            (n_anchors, 4), dtype=torch.float32, device=anchors.device
+        )
         # Update values based on NMS results
         final_class_ids[keep] = class_id[keep]
         final_confidence_scores[keep] = confidence_scores[keep]
@@ -505,7 +503,7 @@ def filter_predictions(
         final_confidence_scores[below_min_idx] = 1 - final_confidence_scores[below_min_idx]  # Adjust confidence
 
         # Combine class IDs, confidence scores, and bounding boxes for the current image
-        result = torch.cat(
+        result: torch.Tensor = torch.cat(
             tensors=[
                 final_class_ids.unsqueeze(-1).float(), 
                 final_confidence_scores.unsqueeze(-1), 
@@ -513,33 +511,31 @@ def filter_predictions(
             ], 
             dim=1,
         )
-        batch_result.append(result.unsqueeze(0))  # Add batch dimension back
+        batch_results.append(result.unsqueeze(0))  # Add batch dimension back
 
     # Concatenate results for all images in the batch
-    return torch.cat(batch_result, dim=0)
+    return torch.cat(batch_results, dim=0)
 
 
 def show_boxes(
-    input_image: typing.Union[Image, torch.Tensor],
+    input_image: Union[Image, torch.Tensor],
     bboxes: torch.Tensor,
-    labels: typing.List[str],
-    output_path: typing.Optional[str],
+    labels: List[str],
+    output_path: Optional[str],
 ) -> None:
     """
     Load an image from a file path, draw bounding boxes with optional labels and colors,
     and either display the image or save it to a file.
 
-    Reference: https://d2l.ai/chapter_computer-vision/anchor.html
-
     Parameters:
-    - input_image: the input PIL.Image object or a torch.Tensor of shape (C, H, W).
-    - bboxes: an (N, 4) tensor representing relative positions of bounding boxes, where each is 
-      [x_min, y_min, x_max, y_max], and N is the number of bouding boxes.
-    - labels: List of labels for each bounding box
-    - output_path: Path to save the output image.
+        - input_image: the input PIL.Image object or a torch.Tensor of shape (C, H, W).
+        - bboxes: an (N, 4) tensor representing relative positions of bounding boxes, where each is 
+        [x_min, y_min, x_max, y_max], and N is the number of bouding boxes.
+        - labels: List of labels for each bounding box
+        - output_path: Path to save the output image.
     
     Returns:
-    - None: The function saves the modified image to `output_path`.
+        - None: The function saves the modified image to `output_path`.
     """
 
     if isinstance(input_image, torch.Tensor):
@@ -548,21 +544,21 @@ def show_boxes(
     if not output_path:
         output_path = f'{input_image}_bboxes.png'
 
-    bboxes = bboxes.clone() # such that it does not alter the input tensor in place
+    bboxes: torch.Tensor = bboxes.clone() # does not alter the input tensor in place
     bboxes[:, [0, 2]] *= input_image.size[0]
     bboxes[:, [1, 3]] *= input_image.size[1]
 
     labels += [''] * max(bboxes.shape[0] - len(labels), 0)
-    labels = labels[:bboxes.shape[0]]
+    labels: List[str] = labels[:bboxes.shape[0]]
 
     # Load the image
     _, ax = plt.subplots()
     ax.imshow(input_image)
 
-    colors = ['b', 'g', 'r', 'm', 'c']
+    colors: List[str] = ['b', 'g', 'r', 'm', 'c']
 
     for i, bbox in enumerate(bboxes):
-        color = colors[i % len(colors)]
+        color: str = colors[i % len(colors)]
         # Create a rectangle patch for each bounding box with the specified color
         rect = matplotlib.patches.Rectangle(
             xy=(bbox[0], bbox[1]), 
@@ -574,7 +570,7 @@ def show_boxes(
         )
         ax.add_patch(rect)
         # Add label text inside the bounding box if labels are provided
-        text_color = 'k' if color == 'w' else 'w'
+        text_color: str = 'k' if color == 'w' else 'w'
         ax.text(
             x=bbox[0], 
             y=bbox[1], 

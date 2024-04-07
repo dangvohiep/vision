@@ -1,8 +1,9 @@
-import typing
+import os
+from typing import Optional, Tuple
 
 import torch
 from torch import nn
-import torch.utils.data
+from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
 
 from utils import Accumulator, EarlyStopping
@@ -16,48 +17,49 @@ def loss_function(
     bbox_labels: torch.Tensor,
     bbox_masks: torch.Tensor,
 ) -> torch.Tensor:
-    
+
     """
     Calculate the loss for class predictions and bounding box predictions.
 
     Parameters:
-    - class_predictions (torch.Tensor): The class predictions tensor with shape
-      (batch_size, n_anchors, n_classes) where n_classes includes the background class.
-    - class_labels (torch.Tensor): The class labels tensor with shape
-      (batch_size, n_anchors).
-    - bbox_predictions (torch.Tensor): The bounding box predictions tensor with shape
-      (batch_size, n_anchors, 4), representing the predicted offsets for each anchor.
-    - bbox_labels (torch.Tensor): The ground truth bounding box labels with shape
-      (batch_size, n_anchors, 4), representing the true offsets for each anchor.
-    - bbox_masks (torch.Tensor): A mask tensor with shape (batch_size, n_anchors, 4)
-      used to filter out the padding bounding boxes in the loss calculation.
+        - class_predictions (torch.Tensor): The class predictions tensor with shape
+        (batch_size, n_anchors, n_classes) where n_classes includes the background class.
+        - class_labels (torch.Tensor): The class labels tensor with shape
+        (batch_size, n_anchors).
+        - bbox_predictions (torch.Tensor): The bounding box predictions tensor with shape
+        (batch_size, n_anchors, 4), representing the predicted offsets for each anchor.
+        - bbox_labels (torch.Tensor): The ground truth bounding box labels with shape
+        (batch_size, n_anchors, 4), representing the true offsets for each anchor.
+        - bbox_masks (torch.Tensor): A mask tensor with shape (batch_size, n_anchors, 4)
+        used to filter out the padding bounding boxes in the loss calculation.
 
     Returns:
-    - torch.Tensor: A tensor representing the total loss (classification loss + bounding box loss)
-      averaged over the batch.
+        - torch.Tensor: A tensor representing the total loss (classification loss + bounding box loss)
+        averaged over the batch.
 
     The function computes the classification loss using cross entropy and the bounding box loss using
     Smooth L1 loss. It then combines these two losses into a single total loss value per example.
 
     """
     # Flatten the predictions and labels to compute the loss across all anchors
-    batch_size, n_classes = class_predictions.shape[0], class_predictions.shape[2]
-    class_prediction_loss = torch.nn.functional.cross_entropy(
+    batch_size: int = class_predictions.shape[0]
+    n_classes: int = class_predictions.shape[2]
+    class_prediction_loss: torch.Tensor = F.cross_entropy(
         input=class_predictions.reshape(-1, n_classes), # shape = (174208, 2)
         target=class_labels.reshape(-1),                # shape = (174208,)
         reduction='none',
     )                                                   # shape = (174208,)
-    class_prediction_loss = class_prediction_loss.reshape(batch_size, -1).mean(dim=1)   # (32,) --> avg across all anchors
+    class_prediction_loss: torch.Tensor = class_prediction_loss.reshape(batch_size, -1).mean(dim=1) # (32,) --> avg across all anchors
 
     # Apply the bounding box mask before calculating the Smooth L1 loss
-    bbox_prediction_loss = torch.nn.functional.smooth_l1_loss(
+    bbox_prediction_loss: torch.Tensor = F.smooth_l1_loss(
         input=bbox_predictions * bbox_masks,            # (32, 5444, 4)
         target=bbox_labels * bbox_masks,                # (32, 5444, 4)
         reduction='none',
     )                                                   # (32, 5444, 4)
-    bbox_prediction_loss = bbox_prediction_loss.mean(dim=(1, 2))  # (32,) --> avg across all bboxes
+    bbox_prediction_loss: torch.Tensor = bbox_prediction_loss.mean(dim=(1, 2))  # (32,) --> avg across all bboxes
     # Combine the classification and bounding box losses
-    alpha = 0.5
+    alpha: float = 0.5
     return alpha * class_prediction_loss + (1 - alpha) * bbox_prediction_loss # (32,)
 
 
@@ -66,21 +68,21 @@ def classification_eval(class_predictions: torch.Tensor, class_labels: torch.Ten
     Evaluate the classification accuracy by comparing predictions with labels.
 
     Parameters:
-    - class_predictions (torch.Tensor): The tensor containing the class predictions. This tensor should
-      have shape (batch_size, n_classes) where `n_classes` represents the number of possible
-      classes, and each element is the predicted score for each class.
-    - class_labels (torch.Tensor): The tensor containing the true class labels. This tensor should
-      have the same batch_size as `class_predictions` and contains the actual class labels.
+        - class_predictions (torch.Tensor): The tensor containing the class predictions. This tensor should
+        have shape (batch_size, n_classes) where `n_classes` represents the number of possible
+        classes, and each element is the predicted score for each class.
+        - class_labels (torch.Tensor): The tensor containing the true class labels. This tensor should
+        have the same batch_size as `class_predictions` and contains the actual class labels.
 
     Returns:
-    - float: The total number of correct predictions converted to a float.
+        - float: The total number of correct predictions converted to a float.
 
     The function computes the accuracy by finding the class with the highest score (using `argmax`)
     for each prediction, then compares these predicted classes with the true labels to count the
     number of correct predictions.
     """
-    predicted_classes = class_predictions.argmax(dim=-1).type(class_labels.dtype)
-    correct_predictions = (predicted_classes == class_labels).sum()
+    predicted_classes: torch.Tensor = class_predictions.argmax(dim=-1).type(class_labels.dtype)
+    correct_predictions: torch.Tensor = (predicted_classes == class_labels).sum()
 
     return float(correct_predictions)
 
@@ -90,18 +92,18 @@ def bbox_eval(bbox_predictions: torch.Tensor, bbox_labels: torch.Tensor, bbox_ma
     Evaluate the bounding box predictions using L1 loss, taking into account specified masks.
 
     Parameters:
-    - bbox_predictions (torch.Tensor): The tensor containing the bounding box predictions. This tensor
-      should have the shape of (batch_size, n_anchors, 4), where each prediction consists of four
-      values (e.g., offset coordinates).
-    - bbox_labels (torch.Tensor): The tensor containing the true bounding box labels with the same
-      shape as `bbox_predictions`.
-    - bbox_masks (torch.Tensor): A tensor of the same shape as `bbox_predictions` and `bbox_labels` used
-      to mask certain bounding boxes during the evaluation. This can be used to ignore padding
-      bounding boxes or those not relevant to the loss calculation.
+        - bbox_predictions (torch.Tensor): The tensor containing the bounding box predictions. This tensor
+        should have the shape of (batch_size, n_anchors, 4), where each prediction consists of four
+        values (e.g., offset coordinates).
+        - bbox_labels (torch.Tensor): The tensor containing the true bounding box labels with the same
+        shape as `bbox_predictions`.
+        - bbox_masks (torch.Tensor): A tensor of the same shape as `bbox_predictions` and `bbox_labels` used
+        to mask certain bounding boxes during the evaluation. This can be used to ignore padding
+        bounding boxes or those not relevant to the loss calculation.
 
     Returns:
-    - float: The sum of the absolute differences (L1 loss) between the predicted and true bounding
-      boxes, after applying the specified masks, converted to a float.
+        - float: The sum of the absolute differences (L1 loss) between the predicted and true bounding
+        boxes, after applying the specified masks, converted to a float.
 
     The function computes the L1 loss for each predicted bounding box relative to the true labels,
     applies the mask to ignore certain boxes (e.g., padding boxes), and then sums the result to
@@ -110,39 +112,39 @@ def bbox_eval(bbox_predictions: torch.Tensor, bbox_labels: torch.Tensor, bbox_ma
     """
     # Calculate the absolute differences between the predicted and true bounding boxes
     # Multiply by `bbox_masks` to zero out the contributions of masked bounding boxes
-    l1_loss = torch.abs((bbox_labels - bbox_predictions) * bbox_masks)
+    l1_loss: torch.Tensor = torch.abs((bbox_labels - bbox_predictions) * bbox_masks)
 
     return l1_loss.sum().item()
 
 
 def train(
     model: nn.Module,
-    train_dataset: torch.utils.data.Dataset,
-    val_dataset: torch.utils.data.Dataset,
+    train_dataset: Dataset,
+    val_dataset: Dataset,
     optimizer: torch.optim.Optimizer,
     train_batch_size: int,
     val_batch_size: int,
     n_epochs: int,
     patience: int,
     tolerance: float,
-    checkpoint_output: typing.Optional[str] = None,
+    checkpoint_output: Optional[str] = None,
 ) -> nn.Module:
     """
     Parameters:
-    - model (nn.Module): The neural network model to train.
-    - train_dataset (torch.utils.data.Dataset): The dataset to train the model on.
-    - val_dataset (torch.utils.data.Dataset): The dataset to evaluate the model on.
-    - optimizer (torch.optim.Optimizer): The optimizer to use for training.
-    - train_batch_size (int): The size of each training batch.
-    - val_batch_size (int): The size of each evaluation batch.
-    - n_epochs (int): The number of epochs to train the model for.
-    - patience (int): Number of epochs with no improvement after which training will be stopped.
-    - tolerance (float): The minimum change in eval_loss. Defaults to 0
-    - checkpoint_output (Optional[str]): The directory path to save model checkpoints after each epoch. 
-      If None, checkpoints are not saved.
+        - model (nn.Module): The neural network model to train.
+        - train_dataset (torch.utils.data.Dataset): The dataset to train the model on.
+        - val_dataset (torch.utils.data.Dataset): The dataset to evaluate the model on.
+        - optimizer (torch.optim.Optimizer): The optimizer to use for training.
+        - train_batch_size (int): The size of each training batch.
+        - val_batch_size (int): The size of each evaluation batch.
+        - n_epochs (int): The number of epochs to train the model for.
+        - patience (int): Number of epochs with no improvement after which training will be stopped.
+        - tolerance (float): The minimum change in eval_loss. Defaults to 0
+        - checkpoint_output (Optional[str]): The directory path to save model checkpoints after each epoch.
+        If None, checkpoints are not saved.
 
     Returns:
-    - (nn.Module) The trained model.
+        - (nn.Module) The trained model.
 
     This function directly modifies the model passed to it by updating its weights based on the
     computed gradients during the training process. It also optionally saves the model's state
@@ -150,29 +152,39 @@ def train(
     """
 
     model.train()
-    train_dataloader = torch.utils.data.DataLoader(
+    train_dataloader = DataLoader(
         dataset=train_dataset,
         batch_size=train_batch_size,
         shuffle=True,
     )
-    train_metrics = Accumulator()
-    early_stopping = EarlyStopping(patience, tolerance)
+    train_metrics: Accumulator = Accumulator()
+    early_stopping: EarlyStopping = EarlyStopping(patience, tolerance)
 
     # loop through each epoch
+    epoch: int
     for epoch in range(n_epochs):
         # Loop through each batch
+        batch: int
+        batch_images: torch.Tensor
+        gt_labels: torch.Tensor
         for batch, (batch_images, gt_labels) in enumerate(train_dataloader):    # (N, 3, 256, 256), (N, 1, 5)
             # Reset gradients
             optimizer.zero_grad()
             # Generate multiscale anchor boxes and predict their classes and offsets
+            anchors: torch.Tensor
+            pred_classes: torch.Tensor
+            pred_offsets: torch.Tensor
             anchors, pred_classes, pred_offsets = model(batch_images)
             # Label the classes and offsets of these anchor boxes
+            gt_offsets: torch.Tensor
+            gt_bbox_masks: torch.Tensor
+            gt_classes: torch.Tensor
             gt_offsets, gt_bbox_masks, gt_classes = compute_groundtruth(
                 anchors=anchors,
                 labels=gt_labels,
             )
             # Calculate the loss function using the predicted and labeled values of the classes and offsets
-            loss = loss_function(
+            loss: torch.Tensor = loss_function(
                 class_predictions=pred_classes,
                 class_labels=gt_classes,
                 bbox_predictions=pred_offsets,
@@ -181,7 +193,7 @@ def train(
             ).mean()
             loss.backward()
             optimizer.step()
-            
+
             # Accumulate the metrics
             train_metrics.add(
                 correct_predictions=classification_eval(class_predictions=pred_classes, class_labels=gt_classes),
@@ -190,9 +202,11 @@ def train(
                 n_mae=gt_offsets.numel(),
                 loss=loss,
             )
-            train_classification_error = 1 - train_metrics['correct_predictions'] / train_metrics['n_predictions']
-            train_bbox_mae = train_metrics['bbox_mae'] / train_metrics['n_mae']
-            train_loss = train_metrics['loss'] / (batch + 1)
+            train_classification_error: float = (
+                1 - train_metrics['correct_predictions'] / train_metrics['n_predictions']
+            )
+            train_bbox_mae: float = train_metrics['bbox_mae'] / train_metrics['n_mae']
+            train_loss: float = train_metrics['loss'] / (batch + 1)
             print(
                 f'Epoch {epoch + 1}/{n_epochs} || '
                 f'Batch {batch + 1}/{len(train_dataloader)} || '
@@ -200,15 +214,21 @@ def train(
                 f'train_bbox_mae: {train_bbox_mae:.2e}, '
                 f'train_loss: {train_loss:.2e}'
             )
-        
+
         # Save checkpoint
         if checkpoint_output:
+            os.makedirs(name=checkpoint_output, exist_ok=True)
             torch.save(model, f'{checkpoint_output}/epoch{epoch + 1}.pt')
 
         # Reset metric records for next epoch
         train_metrics.reset()
 
-        val_classification_error, val_bbox_mae, val_loss = evaluate(model=model, dataset=val_dataset, batch_size=val_batch_size)
+        val_classification_error: float
+        val_bbox_mae: float
+        val_loss: float
+        val_classification_error, val_bbox_mae, val_loss = evaluate(
+            model=model, dataset=val_dataset, batch_size=val_batch_size
+        )
         print(
             f'Epoch {epoch + 1}/{n_epochs} || '
             f'val_classification_error: {val_classification_error:.2e}, '
@@ -221,50 +241,59 @@ def train(
         if early_stopping:
             print('Early Stopped')
             break
-    
+
     return model
 
 
 def evaluate(
-    model: nn.Module, 
-    dataset: torch.utils.data.Dataset,
+    model: nn.Module,
+    dataset: Dataset,
     batch_size: int,
-) -> typing.Tuple[float, float, float]:
+) -> Tuple[float, float, float]:
     """
     Evaluate an object detection model on a given dataset.
 
     Parameters:
-    - model (nn.Module): The object detection model to be evaluated.
-    - dataset (torch.utils.data.Dataset): The dataset on which the model is evaluated.
-    - batch_size (int): size of each evaluation batch.
+        - model (nn.Module): The object detection model to be evaluated.
+        - dataset (torch.utils.data.Dataset): The dataset on which the model is evaluated.
+        - batch_size (int): size of each evaluation batch.
 
     Returns:
-    - Tuple[float, float, torch.Tensor]: Returns a tuple containing the classification error,
-      the mean absolute error (MAE) for bounding box predictions, and the mean loss across all samples.
+        - Tuple[float, float, torch.Tensor]: Returns a tuple containing the classification error,
+        the mean absolute error (MAE) for bounding box predictions, and the mean loss across all samples.
     """
 
     model.eval()
-    dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
-    metrics = Accumulator()
+    dataloader: DataLoader = DataLoader(dataset=dataset, batch_size=batch_size)
+    metrics: Accumulator = Accumulator()
 
     # Loop through each batch
+    batch: int
+    batch_images: torch.Tensor
+    gt_labels: torch.Tensor
     for batch, (batch_images, gt_labels) in enumerate(dataloader):    # (N, 3, 256, 256), (N, 1, 5)
         # Predict the anchor locations, class probabilities, and bounding box offsets from the model.
+        anchors: torch.Tensor
+        pred_classes: torch.Tensor
+        pred_offsets: torch.Tensor
         anchors, pred_classes, pred_offsets = model(batch_images)
         # Compute the ground truth offsets, masks for bounding boxes, and class labels for evaluation.
+        gt_offsets: torch.Tensor
+        gt_bbox_masks: torch.Tensor
+        gt_classes: torch.Tensor
         gt_offsets, gt_bbox_masks, gt_classes = compute_groundtruth(
             anchors=anchors,
             labels=gt_labels,
         )
         # Calculate the loss using predictions and ground truth values.
-        loss = loss_function(
+        loss: float = loss_function(
             class_predictions=pred_classes,
             class_labels=gt_classes,
             bbox_predictions=pred_offsets,
             bbox_labels=gt_offsets,
             bbox_masks=gt_bbox_masks,
         ).mean().item()  # Mean loss over the evaluation dataset.
-        
+
         # Accumulate the metrics
         metrics.add(
             correct_predictions=classification_eval(class_predictions=pred_classes, class_labels=gt_classes),
@@ -273,12 +302,12 @@ def evaluate(
             n_mae=gt_offsets.numel(),
             loss=loss,
         )
-    
+
     # Compute the aggregate metrics
-    classification_error = 1 - metrics['correct_predictions'] / metrics['n_predictions']
-    bbox_mae = metrics['bbox_mae'] / metrics['n_mae']
-    loss = metrics['loss'] / (batch + 1)
-        
+    classification_error: float = 1 - metrics['correct_predictions'] / metrics['n_predictions']
+    bbox_mae: float = metrics['bbox_mae'] / metrics['n_mae']
+    loss: float = metrics['loss'] / (batch + 1)
+
     return classification_error, bbox_mae, loss
 
 
@@ -292,21 +321,24 @@ def predict(model: nn.Module, X: torch.Tensor) -> torch.Tensor:
     confidence scores and the predicted bounding box offsets.
 
     Parameters:
-    - model (nn.Module): The trained object detection model.
-    - X (torch.Tensor): A batch of input images. The tensor is expected to have the shape
-      (batch_size, C, H, W), where C, H, W correspond to the number of channels, height, 
-      and width of the images, respectively.
+        - model (nn.Module): The trained object detection model.
+        - X (torch.Tensor): A batch of input images. The tensor is expected to have the shape
+        (batch_size, C, H, W), where C, H, W correspond to the number of channels, height,
+        and width of the images, respectively.
 
     Returns:
-    - torch.Tensor: A tensor containing filtered predictions for each image in the batch.
-      The shape of the tensor is (batch_size, n_anchors, 6), where each
-      prediction consists of [class_label, score, x_min, y_min, x_max, y_max]
-      for each anchor.
+        - torch.Tensor: A tensor containing filtered predictions for each image in the batch.
+        The shape of the tensor is (batch_size, n_anchors, 6), where each
+        prediction consists of [class_label, score, x_min, y_min, x_max, y_max]
+        for each anchor.
     """
 
     model.eval()
+    anchors: torch.Tensor
+    pred_classes: torch.Tensor
+    pred_offsets: torch.Tensor
     anchors, pred_classes, pred_offsets = model(X)
-    pred_probs = F.softmax(pred_classes, dim=2)
+    pred_probs: torch.Tensor = F.softmax(pred_classes, dim=2)
 
     return filter_predictions(cls_probs=pred_probs, pred_offsets=pred_offsets, anchors=anchors)
 

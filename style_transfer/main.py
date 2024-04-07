@@ -10,7 +10,6 @@ from torch import nn
 from utils import Timer, Logger
 
 
-# TESTING: normalize
 class IO:
 
     def __init__(
